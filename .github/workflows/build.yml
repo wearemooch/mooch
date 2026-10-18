@@ -1,5 +1,6 @@
 # Builds mooch on Windows, Linux and macOS (Apple Silicon and Intel), each on its own OS, and keeps the
-# installers as downloadable artifacts. Builds are unsigned until signing certificates are set up.
+# installers as downloadable artifacts (GitHub zips those). A version tag (git tag v0.1.0) also makes a
+# draft GitHub Release with the installers as plain files. Builds are unsigned until certificates exist.
 #
 # Windows and Linux build on every push. macOS minutes cost ten times as much on private repositories,
 # so macOS builds only for a version tag (v*) or when started by hand (Actions > Build > Run workflow).
@@ -97,3 +98,43 @@ jobs:
             app/release/*.zip
             app/release/*.AppImage
             app/release/*.deb
+
+  # A version tag (v0.1.0) also makes a draft GitHub Release with the installers attached as plain
+  # files (Actions artifacts always download as .zip). Check the draft, then publish it on GitHub.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches the app version
+        shell: bash
+        run: |
+          version=$(node -p "require('./app/package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match app/package.json version $version"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: mooch ${{ github.ref_name }}
+          body: |
+            **Windows:** `mooch-Setup-*.exe` · **macOS:** `*-mac-arm64.dmg` (Apple Silicon) or `*-mac-x64.dmg` (Intel) · **Linux:** `.AppImage` or `.deb`
+
+            The macOS builds are not signed yet: the first time, right-click mooch in Applications and choose **Open**.
+          files: |
+            installers/*.exe
+            installers/*.dmg
+            installers/*.AppImage
+            installers/*.deb
+          fail_on_unmatched_files: true

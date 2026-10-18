@@ -83,7 +83,7 @@ npm run dist
 
 `npm run dist` (Windows), `npm run dist:mac` or `npm run dist:linux` typecheck, run the tests, build, stage the bundled components and license notices (`scripts/stage.mjs`), and write the installer to `app/release/`. Each OS is built on that OS. `npm run pack` builds an unpacked app for testing. Development with hot reload: `npm run dev` (see `app/README.md`).
 
-**CI**: `.github/workflows/build.yml` builds Windows and Linux on every push, and macOS (Apple Silicon and Intel) for version tags (`v*`) or when started by hand (**Actions > Build > Run workflow**). The installers are kept as artifacts. With a repository secret `NVIDIA_NIM_API_KEY` it also runs a real model turn on each OS (`scripts/smoke-backend.mjs`).
+**CI**: `.github/workflows/build.yml` builds Windows and Linux on every push, and macOS (Apple Silicon and Intel) for version tags (`v*`) or when started by hand (**Actions > Build > Run workflow**). The installers are kept as artifacts. To release: set the version in `app/package.json`, then push a matching tag (`git tag v0.1.0 && git push origin v0.1.0`); the workflow builds all four and makes a draft GitHub Release with the installers attached, ready to check and publish. With a repository secret `NVIDIA_NIM_API_KEY` it also runs a real model turn on each OS (`scripts/smoke-backend.mjs`).
 
 ## License
 
