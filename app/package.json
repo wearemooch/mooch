@@ -20,13 +20,13 @@
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "stage": "node scripts/stage.mjs",
-    "pack": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --win --dir",
-    "dist": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --win",
+    "pack": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --win --dir --publish never",
+    "dist": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --win --publish never",
     "codex:types": "codex app-server generate-ts --experimental --out src/main/codex/protocol",
     "smoke:backend": "npm run build:main && node scripts/smoke-backend.mjs",
     "smoke:app": "npm run build && electron scripts/smoke-electron.cjs",
-    "dist:mac": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --mac",
-    "dist:linux": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --linux"
+    "dist:mac": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --mac --publish never",
+    "dist:linux": "npm run typecheck && npm test && npm run build && npm run stage && electron-builder --linux --publish never"
   },
   "dependencies": {
     "diff": "9.0.0",
