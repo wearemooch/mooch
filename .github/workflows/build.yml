@@ -1,0 +1,99 @@
+# Builds mooch on Windows, Linux and macOS (Apple Silicon and Intel), each on its own OS, and keeps the
+# installers as downloadable artifacts. Builds are unsigned until signing certificates are set up.
+#
+# Windows and Linux build on every push. macOS minutes cost ten times as much on private repositories,
+# so macOS builds only for a version tag (v*) or when started by hand (Actions > Build > Run workflow).
+#
+# Optional: add a repository secret NVIDIA_NIM_API_KEY (a free key from build.nvidia.com) to also run
+# the backend smoke test: gateway -> agent engine -> one real model turn, on every OS.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mac:
+        description: Also build for macOS
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  GATEWAY_TAG: v6.16.9
+  UV_VERSION: 0.12.18
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        shell: bash
+        env:
+          WITH_MAC: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.mac) }}
+        run: |
+          base='{"os":"windows-latest","script":"dist","label":"windows-x64"},{"os":"ubuntu-22.04","script":"dist:linux","label":"linux-x64"}'
+          mac='{"os":"macos-14","script":"dist:mac","label":"mac-arm64"},{"os":"macos-13","script":"dist:mac","label":"mac-x64"}'
+          if [ "$WITH_MAC" = "true" ]; then list="$base,$mac"; else list="$base"; fi
+          echo "matrix={\"include\":[$list]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Model gateway (pinned, unmodified)
+        shell: bash
+        run: git clone --depth 1 --branch "$GATEWAY_TAG" https://github.com/alishahryar1/free-claude-code ../_reference/free-claude-code
+
+      - run: npm ci
+
+      - name: Typecheck, test, build and package
+        run: npm run ${{ matrix.script }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Backend smoke test
+        shell: bash
+        env:
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+        if: ${{ env.NVIDIA_NIM_API_KEY != '' }}
+        run: |
+          mkdir -p .smoke-data/fcc-home/.fcc
+          printf 'NVIDIA_NIM_API_KEY=%s\n' "$NVIDIA_NIM_API_KEY" > .smoke-data/fcc-home/.fcc/.env
+          (cd ../_reference/free-claude-code && uv sync --frozen --no-dev)
+          node scripts/smoke-backend.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mooch-${{ matrix.label }}
+          if-no-files-found: error
+          path: |
+            app/release/*.exe
+            app/release/*.dmg
+            app/release/*.zip
+            app/release/*.AppImage
+            app/release/*.deb

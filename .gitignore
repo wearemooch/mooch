@@ -1,0 +1,12 @@
+_reference/
+app/node_modules/
+app/out/
+app/build/stage/
+app/release/
+app/.smoke-data/
+*.log
+# Internal notes and reference material: kept locally, not published.
+PLAN.md
+WRITEUP.md
+research/
+fc-system-prompt/
