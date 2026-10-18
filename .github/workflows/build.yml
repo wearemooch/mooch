@@ -39,7 +39,7 @@ jobs:
           WITH_MAC: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.mac) }}
         run: |
           base='{"os":"windows-latest","script":"dist","label":"windows-x64"},{"os":"ubuntu-22.04","script":"dist:linux","label":"linux-x64"}'
-          mac='{"os":"macos-14","script":"dist:mac","label":"mac-arm64"},{"os":"macos-13","script":"dist:mac","label":"mac-x64"}'
+          mac='{"os":"macos-14","script":"dist:mac","label":"mac-arm64"},{"os":"macos-15-intel","script":"dist:mac","label":"mac-x64"}'
           if [ "$WITH_MAC" = "true" ]; then list="$base,$mac"; else list="$base"; fi
           echo "matrix={\"include\":[$list]}" >> "$GITHUB_OUTPUT"
 
