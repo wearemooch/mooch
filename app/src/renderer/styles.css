@@ -1016,6 +1016,10 @@ optgroup {
 .restore-confirm {
   border-color: var(--accent);
 }
+.race-consent {
+  margin: 0 8px 8px;
+  border-color: var(--accent);
+}
 
 /* Markdown in model output */
 .msg.agent {

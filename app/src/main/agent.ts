@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import type { AgentEvent, ApprovalDecision, ApprovalMode, ModelOption, FileUpdateChange, NewThreadOptions, ResolvedTeam, RestoreFile, RestorePoint, RestoreResult, SendOptions } from '../shared/ipc';
+import type { AgentEvent, ApprovalDecision, ApprovalMode, ModelOption, FileUpdateChange, NewThreadOptions, RacePlan, ResolvedTeam, RestoreFile, RestorePoint, RestoreResult, SendOptions } from '../shared/ipc';
 import { ShadowGit } from './checkpoints/shadowGit';
 import { approvalSettings, CodexAppServer, turnPermissions } from './codex/appServer';
 import type { McpServerStatus } from './codex/protocol/v2/McpServerStatus';
@@ -15,7 +15,8 @@ import type { FccSidecar } from './fcc/sidecar';
 import { HedgeProxy } from './llm/hedge';
 import { ModelHealth } from './llm/modelHealth';
 import { oneShot } from './llm/oneShot';
-import { RaceRunner } from './race/race';
+import { RACE_CONSENT_REQUIRED, RaceRunner, raceNeedsConsent } from './race/race';
+import { detectTestCommand } from './race/workspaceCopy';
 import type { SettingsStore } from './settings';
 import { buildContext } from './team/context';
 import { runCouncil, withPlan } from './team/council';
@@ -148,13 +149,22 @@ export class AgentController {
       this.codex = undefined;
     }
     const codex = await this.ensureCodex();
+    const previous = { team: this.team, models: this.models };
+    try {
+      await this.resolveTeam(threadOptions.model);
+      await codex.resumeThread(threadId, threadOptions.model, approvalSettings(threadOptions.mode), {
+        base: this.masterPrompt(this.cwd!, threadOptions.model, threadOptions.mode),
+      });
+    } catch (error) {
+      this.team = previous.team;
+      this.models = previous.models;
+      throw error;
+    }
+    // Only now does the saved chat's mode apply. Until the engine has it open, the chat in the window
+    // (and its approval policy) stays in charge; a saved Full-auto chat that fails to open changes nothing.
     this.threadOptions = threadOptions;
     this.turn = undefined;
-    await this.resolveTeam(threadOptions.model);
     codex.policy = this.policyFor(threadOptions.mode);
-    await codex.resumeThread(threadId, threadOptions.model, approvalSettings(threadOptions.mode), {
-      base: this.masterPrompt(this.cwd!, threadOptions.model, threadOptions.mode),
-    });
     this.points.clear();
     this.pointTurns.clear();
     for (const event of log) {
@@ -162,6 +172,13 @@ export class AgentController {
       this.points.set(event.point.id, event.point);
       if (event.point.turnId) this.pointTurns.set(event.point.id, event.point.turnId);
     }
+  }
+
+  /** What a race would run here, so the user can agree to it before it starts. */
+  async racePlan(): Promise<RacePlan> {
+    if (!this.cwd) throw new Error('Open a folder first.');
+    const testCommand = this.options.settings.get().raceTestCommand ?? (await detectTestCommand(this.cwd));
+    return { testCommand, needsConsent: raceNeedsConsent(this.mode) };
   }
 
   /** Changes the open chat's model or permissions from the next message on. */
@@ -203,6 +220,7 @@ export class AgentController {
 
     if (sendOptions.race) {
       if (!this.cwd) throw new Error('Open a folder first.');
+      if (raceNeedsConsent(this.mode) && !sendOptions.raceConsent) throw new Error(RACE_CONSENT_REQUIRED);
       // Races work in copies; the restore point is taken right before a result is applied.
       // Runs in the background; progress arrives as race events.
       void this.race

@@ -37,6 +37,7 @@ const api: FreeCodeApi = {
     send: (text, options) => ipcRenderer.invoke('agent:send', text, options),
     interrupt: () => ipcRenderer.invoke('agent:interrupt'),
     respond: (requestId, decision, content) => ipcRenderer.invoke('agent:respond', requestId, decision, content),
+    racePlan: () => ipcRenderer.invoke('agent:racePlan'),
     applyRace: (raceId, contestantId) => ipcRenderer.invoke('agent:applyRace', raceId, contestantId),
     discardRace: (raceId) => ipcRenderer.invoke('agent:discardRace', raceId),
     previewRestore: (pointId) => ipcRenderer.invoke('agent:previewRestore', pointId),

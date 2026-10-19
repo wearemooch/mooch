@@ -77,6 +77,23 @@ describe('SessionRecorder', () => {
     vi.useRealTimers();
   });
 
+  it('goes back to the open chat when continuing a saved one fails', () => {
+    const store = new SessionStore(mkdtempSync(path.join(tmpdir(), 'mooch-sessions-')));
+    const OPEN = '11111111-2222-3333-4444-555555555555';
+    const recorder = new SessionRecorder(store, () => [], () => ({ cwd: 'D:/p', mode: 'ask' }), 0);
+    recorder.onEvent({ kind: 'thread', threadId: OPEN, model: 'm' });
+    const undo = recorder.resume(summary({ mode: 'full-auto', messages: 3 }));
+    expect(recorder.currentId).toBe(ID);
+    undo();
+    expect(recorder.currentId).toBe(OPEN);
+    // The open chat's next messages are saved under its own id, not over the saved chat.
+    recorder.onEvent(userMessage('next'));
+    recorder.onEvent({ kind: 'turnCompleted', turnId: 't', status: 'completed' });
+    recorder.flush();
+    expect(store.get(OPEN)).toMatchObject({ messages: 1 });
+    expect(store.get(ID)).toBeUndefined();
+  });
+
   it('keeps a continued chat under its own id and title', () => {
     const store = new SessionStore(mkdtempSync(path.join(tmpdir(), 'mooch-sessions-')));
     const recorder = new SessionRecorder(store, () => [], () => ({ cwd: 'D:/other', mode: 'ask' }), 0);

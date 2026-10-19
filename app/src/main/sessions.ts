@@ -133,10 +133,14 @@ export class SessionRecorder {
     private readonly delayMs = 500,
   ) {}
 
-  /** The chat now open is a saved one being continued. */
-  resume(summary: SessionSummary): void {
+  /** The chat now open is a saved one being continued. Returns an undo, for when continuing fails. */
+  resume(summary: SessionSummary): () => void {
     this.flush();
+    const previous = this.current;
     this.current = { ...summary };
+    return () => {
+      if (this.current?.id === summary.id) this.current = previous;
+    };
   }
 
   get currentId(): string | undefined {

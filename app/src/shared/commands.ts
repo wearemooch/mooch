@@ -57,6 +57,14 @@ export function isReadOnlyCommand(command: string): boolean {
   return segments.length > 0 && segments.every(isReadOnlySegment);
 }
 
+/** The program each segment of the command starts with, lowercased (`git`, `cat`…). */
+export function commandNames(command: string): string[] {
+  return displayCommand(command)
+    .split(/\|\||&&|[|;&\r\n]/)
+    .map((s) => s.trim().split(/\s+/)[0]?.toLowerCase().replace(/\.exe$/, '').replace(/^.*[\\/]/, ''))
+    .filter((name): name is string => !!name);
+}
+
 function isReadOnlySegment(segment: string): boolean {
   const [first, ...args] = segment.split(/\s+/);
   const name = first.toLowerCase().replace(/\.exe$/, '');

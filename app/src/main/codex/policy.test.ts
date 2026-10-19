@@ -1,5 +1,9 @@
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { referencesOutside, workspacePolicy } from './policy';
+import { linkedProject } from '../linkedProject.fixture';
+import { referencesOutside, touchesSharedDependencies, workspacePolicy } from './policy';
 
 const root = 'C:\\work\\copy1';
 const ps = (inner: string) => String.raw`"C:\Program Files\PowerShell\7\pwsh.exe" -Command '` + inner + "'";
@@ -26,6 +30,68 @@ describe('workspacePolicy', () => {
     expect(policy({ type: 'command', command: ps('cat ..\\..\\secret.txt') })).toBe('decline');
     expect(policy({ type: 'fileChange', paths: ['C:/tmp/test.txt'] })).toBe('decline');
     expect(policy({ type: 'fileChange', paths: ['math.js'] })).toBe('accept');
+  });
+
+  it('only answers plain commands that run in the project', () => {
+    for (const mode of ['ask', 'race'] as const) {
+      const policy = workspacePolicy(root, mode);
+      const refused = mode === 'race' ? 'decline' : undefined;
+      expect(policy({ type: 'command', command: ps('cat id_rsa'), cwd: 'C:\\Users\\me\\.ssh' }), mode).toBe(refused);
+      expect(policy({ type: 'command', command: ps('cat math.js'), kind: 'writeStdin' }), mode).toBe(refused);
+      expect(policy({ type: 'command', command: ps('cat math.js'), extraPermissions: true }), mode).toBe(refused);
+      expect(policy({ type: 'command', command: ps('cat math.js'), cwd: `${root}\\src`, kind: 'command' }), mode).toBe('accept');
+    }
+    // Race: a write somewhere else, given as a relative path in an outside folder.
+    expect(workspacePolicy(root, 'race')({ type: 'command', command: ps('Remove-Item -Recurse *'), cwd: 'C:\\Users\\me\\project' })).toBe('decline');
+  });
+
+  it('auto-edit: edits to git metadata ask', () => {
+    const policy = workspacePolicy(root, 'auto-edit');
+    for (const file of ['.git\\config', `${root}\\.git\\hooks\\pre-commit`, '.gitattributes', 'sub\\.gitmodules']) {
+      expect(policy({ type: 'fileChange', paths: [file] }), file).toBeUndefined();
+    }
+    expect(policy({ type: 'fileChange', paths: ['src\\git.js'] })).toBe('accept');
+  });
+
+  it('git reads ask when the repository config could run a program', () => {
+    const repo = (config: string) => {
+      const dir = mkdtempSync(path.join(tmpdir(), 'mooch-git-'));
+      mkdirSync(path.join(dir, '.git'));
+      writeFileSync(path.join(dir, '.git', 'config'), config);
+      return dir;
+    };
+    const clean = repo('[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote "origin"]\n\turl = https://example.com/x.git\n[branch "clean-up"]\n\tremote = origin\n');
+    const sh = (cmd: string) => (process.platform === 'win32' ? ps(cmd) : `/bin/bash -lc '${cmd}'`);
+    expect(workspacePolicy(clean, 'ask')({ type: 'command', command: sh('git status') })).toBe('accept');
+    for (const config of [
+      '[core]\n\tfsmonitor = ./evil.sh\n',
+      '[diff]\n\texternal = ./evil.sh\n',
+      '[diff "pdf"]\n\ttextconv = ./evil.sh\n',
+      '[filter "x"]\n\tclean = ./evil.sh\n',
+      '[include]\n\tpath = ../elsewhere\n',
+      '[CORE]\n  FsMonitor\n',
+    ]) {
+      const dir = repo(config);
+      expect(workspacePolicy(dir, 'ask')({ type: 'command', command: sh('git status') }), config).toBeUndefined();
+      // Other read-only commands are unaffected.
+      expect(workspacePolicy(dir, 'ask')({ type: 'command', command: sh('cat README.md') }), config).toBe('accept');
+    }
+  });
+
+  it('race: the shared dependency folders stay off limits', () => {
+    // In a real copy, node_modules is a link to the real project's.
+    const { root: copy } = linkedProject();
+    symlinkSync(path.join(copy, 'link'), path.join(copy, 'node_modules'), 'junction');
+    const policy = workspacePolicy(copy, 'race');
+    expect(policy({ type: 'fileChange', paths: [path.join(copy, 'node_modules', 'dep', 'index.js')] })).toBe('decline');
+    expect(policy({ type: 'fileChange', paths: [path.join(copy, 'src', 'a.js')] })).toBe('accept');
+    for (const cmd of ['npm install lodash', 'npm i', 'pnpm add x', 'yarn', 'pip install requests', 'python -m pip install x', 'uv sync', 'rm -rf node_modules/x']) {
+      expect(touchesSharedDependencies(cmd), cmd).toBe(true);
+      expect(policy({ type: 'command', command: `/bin/bash -lc '${cmd}'` }), cmd).toBe('decline');
+    }
+    for (const cmd of ['npm test', 'npm run build', 'node test.js', 'yarn test', 'python -m pytest -q']) {
+      expect(touchesSharedDependencies(cmd), cmd).toBe(false);
+    }
   });
 
   it('spots outside references', () => {

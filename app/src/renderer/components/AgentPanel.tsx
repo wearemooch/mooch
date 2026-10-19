@@ -28,8 +28,36 @@ function useWorkingLabel(running: boolean, lastActivity: number): string {
   return silent >= 5 ? `Waiting for the model… ${silent}s` : 'Working…';
 }
 
+/** Races run unattended with Full auto's authority, so outside Full auto the user says yes first. */
+function RaceConsentCard({ testCommand }: { testCommand?: string }) {
+  const { confirmRace, cancelRace } = useApp.getState();
+  return (
+    <div className="card race-consent" role="alertdialog" aria-label="Start a race?">
+      <div className="card-title">Race without asking?</div>
+      <p className="muted">
+        Each agent edits its own copy of the project and runs commands there without asking you
+        {testCommand ? (
+          <>
+            , and then mooch runs <code>{testCommand}</code> in every copy
+          </>
+        ) : null}
+        . That code runs as you, not in a sandbox, so only race projects you trust.
+      </p>
+      <div className="actions">
+        <button className="btn primary small" onClick={() => void confirmRace()}>
+          <FlagCheckered />
+          Start race
+        </button>
+        <button className="btn small" onClick={cancelRace}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function AgentPanel() {
-  const { models, model, mode, transcript, codex, codexMessage, notice, fcc, workspace, lastActivity, busyUntil } = useApp();
+  const { models, model, mode, transcript, codex, codexMessage, notice, fcc, workspace, lastActivity, busyUntil, raceConsent } = useApp();
   const isBusy = (slug: string) => (busyUntil[slug] ?? 0) > Date.now();
   const silenceLabel = useWorkingLabel(transcript.running, lastActivity);
   const awaitingYou = transcript.entries.some((e) => e.type === 'approval' && !e.resolved);
@@ -197,6 +225,7 @@ export function AgentPanel() {
       )}
       {codex === 'stopped' && codexMessage && transcript.threadId && <div className="notice">{codexMessage}</div>}
 
+      {raceConsent && <RaceConsentCard testCommand={raceConsent.testCommand} />}
       <div className="composer">
         {menuOpen && <CommandMenu commands={menuMatches} index={menuIndex} onPick={pick} onHover={setMenuIndex} />}
         <textarea

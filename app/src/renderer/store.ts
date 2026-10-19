@@ -46,6 +46,10 @@ interface AppState {
   updateSettings(patch: Partial<FreeCodeSettings>): Promise<void>;
   loadTeam(): Promise<void>;
   race(text: string): Promise<void>;
+  /** A race waiting for the user's OK (outside Full auto, races don't ask before running things). */
+  raceConsent?: { text: string; testCommand?: string };
+  confirmRace(): Promise<void>;
+  cancelRace(): void;
   /** Text to put back in the input box after a rewind. */
   draftRequest?: string;
   restore(pointId: string, rewind: boolean): Promise<void>;
@@ -190,10 +194,27 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       if (!get().transcript.threadId) await get().newChat();
       if (!get().transcript.threadId) return;
+      const plan = await api.agent.racePlan();
+      if (plan.needsConsent) {
+        set({ raceConsent: { text, testCommand: plan.testCommand } });
+        return;
+      }
       await api.agent.send(text, { race: true });
     } catch (error) {
       set({ notice: errorMessage(error) });
     }
+  },
+
+  async confirmRace() {
+    const consent = get().raceConsent;
+    if (!consent) return;
+    set({ raceConsent: undefined });
+    await api.agent.send(consent.text, { race: true, raceConsent: true }).catch((error) => set({ notice: errorMessage(error) }));
+  },
+
+  cancelRace() {
+    // The request goes back in the input box, to send normally or race later.
+    set({ draftRequest: get().raceConsent?.text, raceConsent: undefined });
   },
 
   async restore(pointId, rewind) {

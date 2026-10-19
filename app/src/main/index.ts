@@ -236,8 +236,9 @@ handle('agent:newThread', (options: NewThreadOptions) => {
   return agent.newThread({ model: options.model, mode: options.mode });
 });
 handle('agent:send', (message: unknown, options?: SendOptions) =>
-  agent.send(text(message, 200_000), { race: options?.race === true, deep: options?.deep === true, skill: validSkill(options?.skill), openFiles: Array.isArray(options?.openFiles) ? options.openFiles.filter((f) => typeof f === 'string').slice(0, 50) : undefined }),
+  agent.send(text(message, 200_000), { race: options?.race === true, raceConsent: options?.raceConsent === true,deep: options?.deep === true, skill: validSkill(options?.skill), openFiles: Array.isArray(options?.openFiles) ? options.openFiles.filter((f) => typeof f === 'string').slice(0, 50) : undefined }),
 );
+handle('agent:racePlan', () => agent.racePlan());
 handle('agent:applyRace', (raceId: unknown, contestantId: unknown) => agent.applyRace(text(raceId, 100), text(contestantId, 100)));
 handle('agent:discardRace', (raceId: unknown) => agent.discardRace(text(raceId, 100)));
 handle('agent:previewRestore', (pointId: unknown) => agent.previewRestore(text(pointId, 100)));
@@ -369,12 +370,22 @@ handle('sessions:resume', async (id: unknown, model: unknown) => {
   const summary = sessions.get(id);
   if (!summary) throw new Error('That chat is no longer saved.');
   if (!existsSync(summary.cwd) || !statSync(summary.cwd).isDirectory()) throw new Error(`Its project folder is gone: ${summary.cwd}`);
-  if (path.resolve(summary.cwd).toLowerCase() !== path.resolve(workspace?.root ?? '').toLowerCase()) openWorkspace(summary.cwd);
+  const previousRoot = workspace?.root;
+  const switching = path.resolve(summary.cwd).toLowerCase() !== path.resolve(previousRoot ?? '').toLowerCase();
+  if (switching) openWorkspace(summary.cwd);
   const log = sessions.read(id);
   // A model that is no longer available is replaced by the one picked in the window.
   const chosen = typeof model === 'string' && model.length < 300 ? model : summary.model;
-  recorder.resume(summary);
-  await agent.resumeThread(id, { model: chosen, mode: summary.mode }, log);
+  const undoRecorder = recorder.resume(summary);
+  try {
+    await agent.resumeThread(id, { model: chosen, mode: summary.mode }, log);
+  } catch (error) {
+    // The window still shows the previous chat, so the main process goes back to it too: its folder,
+    // and its log (otherwise its next messages would be saved over the chat that failed to open).
+    undoRecorder();
+    if (switching && previousRoot) openWorkspace(previousRoot);
+    throw error;
+  }
   agentEvents.replaceHistory(log);
   return { workspace: workspace!.root, model: chosen, mode: summary.mode };
 });

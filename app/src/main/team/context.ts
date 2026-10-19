@@ -1,6 +1,7 @@
 // What planners see of the project: a file tree, key project files, and the files open in the editor.
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isReallyInside } from '../realPath';
 
 const SKIP = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.next', 'dist', 'out', 'build', 'target', '.smoke-data']);
 const KEY_FILES = ['package.json', 'README.md', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'AGENTS.md'];
@@ -45,7 +46,8 @@ export async function buildContext(root: string, options: ContextOptions = {}): 
   for (const file of candidates) {
     const absolute = path.resolve(root, file);
     const relative = path.relative(root, absolute);
-    if (seen.has(absolute) || relative.startsWith('..')) continue;
+    // A key file that is a link to something outside (README.md -> ~/.ssh/id_ed25519) is skipped.
+    if (seen.has(absolute) || relative.startsWith('..') || path.isAbsolute(relative) || !isReallyInside(root, absolute)) continue;
     seen.add(absolute);
     let text: string;
     try {

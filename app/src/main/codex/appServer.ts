@@ -3,7 +3,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { AgentEvent, ApprovalDecision, ApprovalMode, ApprovalRequest, FileUpdateChange } from '../../shared/ipc';
 import type { CodexLaunch } from './launch';
-import type { ApprovalPolicy, ApprovalQuestion } from './policy';
+import type { ApprovalPolicy, ApprovalQuestion, CommandQuestion } from './policy';
 import { FCC_PROVIDER_ID } from './launch';
 import { JsonlRpcConnection, type IncomingRequest, type RequestId } from './jsonl';
 import { OutputLimiter } from './outputLimit';
@@ -45,6 +45,17 @@ export interface ThreadPermissions {
 }
 
 /** The same permissions as approvalSettings(), in the shape turn/start takes for a mid-chat change. */
+/** Everything the policy must weigh about a command approval, not just its text. */
+export function commandQuestion(p: CommandExecutionRequestApprovalParams): CommandQuestion {
+  return {
+    type: 'command',
+    command: p.command ?? '',
+    cwd: p.cwd ? p.cwd.replace(/^\\\\\?\\/, '') : undefined,
+    kind: p.kind ?? 'command',
+    extraPermissions: p.additionalPermissions != null || p.networkApprovalContext != null,
+  };
+}
+
 export function turnPermissions(mode: ApprovalMode): Pick<TurnStartParams, 'approvalPolicy' | 'sandboxPolicy'> {
   return mode === 'full-auto'
     ? { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } }
@@ -493,7 +504,7 @@ export class CodexAppServer {
     this.openApprovals.add(request.id);
     const question: ApprovalQuestion =
       request.method === 'item/commandExecution/requestApproval'
-        ? { type: 'command', command: (request.params as CommandExecutionRequestApprovalParams).command ?? '' }
+        ? commandQuestion(request.params as CommandExecutionRequestApprovalParams)
         : { type: 'fileChange', paths: this.patchPaths.get((request.params as FileChangeRequestApprovalParams).itemId) ?? [] };
     const decision = this.policy?.(question) ?? (this.unattended ? 'decline' : undefined);
     if (decision) {

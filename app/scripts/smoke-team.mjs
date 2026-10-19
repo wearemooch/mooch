@@ -201,7 +201,8 @@ try {
         : scenario === 'shell'
           ? 'Run exactly this command and reply with its raw output only: (Get-Command rg -ErrorAction SilentlyContinue).Source; $PSVersionTable.PSVersion.ToString()'
         : 'npm test fails. Find and fix the bug, then run npm test to confirm it passes.';
-  await agent.send(prompt, { race: scenario === 'race', openFiles: [path.join(demo, 'math.js')] });
+  // The race scenario runs in Ask first, where a race needs the user's OK (the window asks for it).
+  await agent.send(prompt, { race: scenario === 'race', raceConsent: scenario === 'race', openFiles: [path.join(demo, 'math.js')] });
   await Promise.race([finished, new Promise((_, reject) => setTimeout(() => reject(new Error('scenario timeout')), 540_000))]);
   if (scenario.startsWith('mcp')) {
     log('mcp status', JSON.stringify((await agent.mcpStatus())?.map((s) => ({ name: s.name, status: s.runtimeStatus, tools: Object.keys(s.tools), error: s.toolsError }))));

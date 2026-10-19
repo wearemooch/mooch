@@ -272,9 +272,17 @@ export interface RestoreResult {
   message?: string;
 }
 
+export interface RacePlan {
+  testCommand?: string;
+  /** Races run commands and tests without asking, so outside Full auto the user agrees first. */
+  needsConsent: boolean;
+}
+
 export interface SendOptions {
   /** Run as a race between several agents in copies of the workspace. */
   race?: boolean;
+  /** The user agreed to race without approvals (needed unless the chat is in Full auto). */
+  raceConsent?: boolean;
   /** Files open in the editor, included as context for planners. */
   openFiles?: string[];
   /** Deep thinking for this one message, whatever the setting says (/deep). */
@@ -352,6 +360,8 @@ export interface FreeCodeApi {
     interrupt(): Promise<void>;
     /** `content`: the filled-in fields of an integration's form. */
     respond(requestId: string | number, decision: ApprovalDecision, content?: Record<string, unknown>): Promise<void>;
+    /** What a race would run: the test command, and whether the user must agree first. */
+    racePlan(): Promise<RacePlan>;
     applyRace(raceId: string, contestantId: string): Promise<void>;
     discardRace(raceId: string): Promise<void>;
     previewRestore(pointId: string): Promise<RestoreFile[]>;

@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { copyFile, lstat, mkdir, readdir, readFile, rm, rmdir, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { TestResult } from '../../shared/ipc';
+import { isReallyInside } from '../realPath';
 
 /** Too big or regenerable to copy; contestants share the original through a directory link. */
 const LINKED = new Set(['node_modules', '.venv', 'venv']);
@@ -99,6 +100,9 @@ export async function applyChanges(copyRoot: string, workspace: string, baseline
   const skipped: string[] = [];
   const untouched = async (file: string) => {
     const target = path.join(workspace, file);
+    // Links in the real project are left out of copies, so a contestant can put a plain folder of
+    // the same name in its copy; writing that back would follow the real link out of the project.
+    if (!isReallyInside(workspace, target)) return false;
     if (!baseline.has(file)) return !existsSync(target);
     return existsSync(target) && (await hashFile(target)) === baseline.get(file);
   };
@@ -169,10 +173,24 @@ export async function detectTestCommand(root: string): Promise<string | undefine
   return undefined;
 }
 
+/** What a test run needs to find its tools; mooch's own variables (tokens, API keys) stay out. */
+const TEST_ENV = new Set([
+  'PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'OS', 'TEMP', 'TMP', 'TMPDIR', 'HOME', 'USERPROFILE',
+  'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMW6432',
+  'COMMONPROGRAMFILES', 'COMMONPROGRAMFILES(X86)', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'USER', 'USERNAME',
+  'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TERM', 'TZ', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR',
+]);
+
+export function testEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = { CI: '1' };
+  for (const [name, value] of Object.entries(env)) if (value !== undefined && TEST_ENV.has(name.toUpperCase())) result[name] = value;
+  return result;
+}
+
 export function runTests(command: string, cwd: string, timeoutMs = 180_000): Promise<TestResult> {
   return new Promise((resolve) => {
     let output = '';
-    const child = spawn(command, { cwd, shell: true, windowsHide: true, env: { ...process.env, CI: '1' } });
+    const child = spawn(command, { cwd, shell: true, windowsHide: true, env: testEnvironment(process.env) });
     const collect = (chunk: Buffer) => (output = (output + chunk.toString('utf8')).slice(-6000));
     child.stdout.on('data', collect);
     child.stderr.on('data', collect);

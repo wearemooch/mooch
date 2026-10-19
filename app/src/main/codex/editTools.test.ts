@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { usesEditTools } from './editToolHandler';
 import { applyEdit, editSummary, planEdit } from './editTools';
+import { linkedProject } from '../linkedProject.fixture';
 
 describe('edit tools', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'fc-edit-'));
@@ -25,6 +26,16 @@ describe('edit tools', () => {
     expect(all.after).toBe('y\ny\n');
     await expect(planEdit(root, 'write_file', { path: '../escape.txt', content: 'x' })).rejects.toThrow(/outside the project/);
     await expect(planEdit(root, 'edit_file', { path: 'missing.js', old_string: 'a', new_string: 'b' })).rejects.toThrow(/write_file/);
+  });
+
+  it('refuses edits that would leave the project through a link', async () => {
+    const { root: linked, outside } = linkedProject();
+    await expect(planEdit(linked, 'write_file', { path: 'link/planted.txt', content: 'x' })).rejects.toThrow(/through a link/);
+    await expect(planEdit(linked, 'edit_file', { path: 'link/secret.txt', old_string: 'DUMMY', new_string: 'x' })).rejects.toThrow(/through a link/);
+    expect(existsSync(path.join(outside, 'planted.txt'))).toBe(false);
+    expect(readFileSync(path.join(outside, 'secret.txt'), 'utf8')).toBe('DUMMY-SECRET-123');
+    // Ordinary files next to the link still work.
+    await expect(planEdit(linked, 'write_file', { path: 'src/ok.txt', content: 'x' })).resolves.toBeDefined();
   });
 
   it('creates files with write_file', async () => {

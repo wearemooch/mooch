@@ -54,7 +54,8 @@ Main process ── agent engine (OpenAI Codex, app-server mode) ── local mo
   - *Full auto*: nothing asks. Use it only in projects you trust and can restore.
 - Commands that touch anything outside the project folder (other drives, your home folder, network shares, environment variables, the registry) are never run automatically, not even read-only ones.
 - Integrations (MCP servers) are programs that run with your permissions: add only ones you trust. mooch only reads your own `~/.mooch/mcp.json`, never a project's. Skills are instructions and scripts; installing one never runs anything.
-- Open only projects you trust. Like any coding tool, the agent runs the project's own scripts (tests, builds) when you approve them or start a Race.
+- Open only projects you trust. Like any coding tool, the agent runs the project's own scripts (tests, builds) when you approve them or start a Race. A Race runs commands and the tests in its copies without asking, so outside Full auto mooch asks you before it starts one.
+- Edits, race results and planner context stay inside the project folder even through links: a symlink or junction in the project that points elsewhere is treated as outside.
 - Data locations:
   - Your folder, `~/.mooch` (`C:\Users\<you>\.mooch`): settings, provider keys, chats, restore points, skills, integrations, logs
   - Gateway runtime (Python and packages): `%LOCALAPPDATA%\Programs\mooch-runtime`

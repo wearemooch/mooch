@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FileUpdateChange } from '../../shared/ipc';
+import { isReallyInside } from '../realPath';
 import type { DynamicToolSpec } from './protocol/v2/DynamicToolSpec';
 
 export const EDIT_TOOL_NAMES = new Set(['edit_file', 'write_file']);
@@ -61,6 +62,8 @@ function resolveInside(root: string, file: unknown): { absolute: string; relativ
   const absolute = path.resolve(root, file);
   const relative = path.relative(root, absolute);
   if (relative.startsWith('..') || path.isAbsolute(relative)) throw new EditError(`${file} is outside the project folder.`);
+  // A symlink or junction in the project can point anywhere; the write would land there.
+  if (!isReallyInside(root, absolute)) throw new EditError(`${file} leads outside the project folder through a link.`);
   return { absolute, relative };
 }
 

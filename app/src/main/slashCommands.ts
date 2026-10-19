@@ -4,6 +4,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CustomCommand } from '../shared/ipc';
+import { isReallyInside } from './realPath';
 
 const NAME = /^[a-z0-9][a-z0-9_-]{0,40}$/;
 const MAX_BYTES = 64 * 1024;
@@ -16,7 +17,8 @@ export function parseCommandFile(text: string): { description: string; body: str
   return { description, body: match[2].trim() };
 }
 
-function readFolder(dir: string, scope: CustomCommand['scope']): CustomCommand[] {
+/** `confineTo`: a project's commands must really be in the project, not links to files elsewhere. */
+function readFolder(dir: string, scope: CustomCommand['scope'], confineTo?: string): CustomCommand[] {
   let files: string[];
   try {
     files = readdirSync(dir);
@@ -28,6 +30,7 @@ function readFolder(dir: string, scope: CustomCommand['scope']): CustomCommand[]
     if (!file.toLowerCase().endsWith('.md')) continue;
     const name = file.slice(0, -3).toLowerCase();
     if (!NAME.test(name)) continue;
+    if (confineTo && !isReallyInside(confineTo, path.join(dir, file))) continue;
     try {
       const text = readFileSync(path.join(dir, file), 'utf8');
       if (text.length > MAX_BYTES) continue;
@@ -44,6 +47,6 @@ function readFolder(dir: string, scope: CustomCommand['scope']): CustomCommand[]
 export function loadCustomCommands(userDir: string, projectRoot?: string): CustomCommand[] {
   const byName = new Map<string, CustomCommand>();
   for (const command of readFolder(userDir, 'user')) byName.set(command.name, command);
-  if (projectRoot) for (const command of readFolder(path.join(projectRoot, '.mooch', 'commands'), 'project')) byName.set(command.name, command);
+  if (projectRoot) for (const command of readFolder(path.join(projectRoot, '.mooch', 'commands'), 'project', projectRoot)) byName.set(command.name, command);
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }

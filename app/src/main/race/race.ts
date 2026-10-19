@@ -1,7 +1,7 @@
 // Race: several agents solve the same request in separate copies; the project's tests pick the winner.
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { AgentEvent, ContestantState, FileUpdateChange, RaceState } from '../../shared/ipc';
+import type { AgentEvent, ApprovalMode, ContestantState, FileUpdateChange, RaceState } from '../../shared/ipc';
 import { CodexAppServer } from '../codex/appServer';
 import { buildCodexLaunch } from '../codex/launch';
 import { workspacePolicy } from '../codex/policy';
@@ -39,6 +39,16 @@ interface Race {
   contestants: Contestant[];
 }
 
+/**
+ * Contestants edit and run commands in their copies without asking anyone, and mooch runs the test
+ * command in each copy. That is Full auto's authority, so in any other mode the user agrees first.
+ */
+export function raceNeedsConsent(mode: ApprovalMode): boolean {
+  return mode !== 'full-auto';
+}
+
+export const RACE_CONSENT_REQUIRED = 'A race runs commands and the test command without asking. Confirm the race first, or switch the chat to Full auto.';
+
 /** Winner: tests pass, then the smallest change, then the fastest. Without a test command, the smallest finished change. */
 export function pickWinner(contestants: ContestantState[]): string | undefined {
   const finished = contestants.filter((c) => c.status === 'done' && c.changedFiles.length > 0);
@@ -51,6 +61,7 @@ function developerInstructions(testCommand: string | undefined): string {
   return [
     'You are one of several agents solving the same request at the same time, each in its own copy of the project.',
     'Nobody can answer questions or approve anything while you work, so work autonomously and finish the whole task.',
+    'node_modules and Python virtual environments are shared with the real project: do not install, remove or edit dependencies.',
     testCommand
       ? `When you are done, run \`${testCommand}\` and make sure it passes. The copy whose tests pass with the smallest change wins.`
       : 'There is no test command, so verify your change another way. The smallest correct change wins.',

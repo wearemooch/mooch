@@ -2,21 +2,46 @@
 // Windows unless an elevated setup has been run, so threads run with Codex asking for every write
 // and this policy answers what it safely can.
 import path from 'node:path';
-import { displayCommand, isReadOnlyCommand } from '../../shared/commands';
+import { commandNames, displayCommand, isReadOnlyCommand } from '../../shared/commands';
 import type { ApprovalDecision } from '../../shared/ipc';
+import { isReallyInside } from '../realPath';
+import { gitConfigRunsPrograms } from './gitConfig';
 
 export type PolicyMode = 'ask' | 'auto-edit' | 'race';
 
-export type ApprovalQuestion = { type: 'command'; command: string } | { type: 'fileChange'; paths: string[] } | { type: 'mcpTool'; server: string; tool: string };
+export interface CommandQuestion {
+  type: 'command';
+  command: string;
+  /** Where the command runs; commands elsewhere are never automatic. */
+  cwd?: string;
+  /** 'writeStdin' is input to a terminal that is already running, not a new command. */
+  kind?: string;
+  /** The command asks for more than the sandbox allows (network, extra folders). */
+  extraPermissions?: boolean;
+}
+
+export type ApprovalQuestion = CommandQuestion | { type: 'fileChange'; paths: string[] } | { type: 'mcpTool'; server: string; tool: string };
 
 /** A decision to answer automatically, or undefined to ask the user. */
 export type ApprovalPolicy = (question: ApprovalQuestion) => ApprovalDecision | undefined;
 
+/**
+ * True when `target` is inside `root`. When the path belongs to this OS, links are followed too, so a
+ * symlink or junction in the project that points elsewhere counts as outside.
+ */
 export function isInside(root: string, target: string): boolean {
   // Path rules follow the project's own path, not the OS running the check (tests run on all three).
   const p = /^[A-Za-z]:[\\/]|^\\\\/.test(root) ? path.win32 : root.startsWith('/') ? path.posix : path;
   const relative = p.relative(p.resolve(root), p.resolve(root, target));
-  return !relative.startsWith('..') && !p.isAbsolute(relative);
+  if (relative.startsWith('..') || p.isAbsolute(relative)) return false;
+  return p !== path || isReallyInside(root, target);
+}
+
+/** Git's own metadata: editing it can make later git commands run programs, so edits there always ask. */
+export function isGitMetadata(target: string): boolean {
+  const parts = target.split(/[\\/]+/).map((part) => part.toLowerCase());
+  const name = parts[parts.length - 1];
+  return parts.includes('.git') || name === '.gitattributes' || name === '.gitmodules';
 }
 
 /** A token that names a path from the drive root (`\Windows`, `/etc/hosts`), not a cmd switch like `/s` or `/c:x`. */
@@ -48,20 +73,40 @@ export function referencesOutside(root: string, command: string): boolean {
   return tokens.some((t) => isRootedPath(t) && !(root.startsWith('/') && t.startsWith('/') && isInside(root, t)));
 }
 
+/**
+ * In a race copy, node_modules and virtual environments are links to the real project's (copying
+ * them would be too slow), so installing packages or writing there would change the real project.
+ */
+export function touchesSharedDependencies(command: string): boolean {
+  const inner = displayCommand(command);
+  if (/(^|[\s'"=\\/])(node_modules|\.venv|venv)([\\/\s'"]|$)/i.test(inner)) return true;
+  return (
+    /\b(npm|pnpm|bun)\s+(i|in|install|ci|add|remove|rm|r|uninstall|un|update|up|upgrade|link|ln|unlink|rebuild|dedupe|prune)\b/i.test(inner) ||
+    /\byarn(\s*$|\s*[|;&]|\s+(install|add|remove|upgrade|up|link|unlink|dedupe)\b)/i.test(inner) ||
+    /\b(pip3?|uv\s+pip)\s+(install|uninstall)\b|\bpython[\d.]*\s+-m\s+pip\b|\b(uv|poetry|pdm|pipenv)\s+(add|remove|sync|install|lock|update)\b/i.test(inner)
+  );
+}
+
 export function workspacePolicy(root: string, mode: PolicyMode): ApprovalPolicy {
   return (question) => {
     // Integrations' tools that write something always ask (the engine runs read-only ones by itself);
     // races decline them, since copies shouldn't touch outside services.
     if (question.type === 'mcpTool') return mode === 'race' ? 'decline' : undefined;
+    const refuse = mode === 'race' ? 'decline' : undefined;
     if (question.type === 'command') {
+      // Only a plain new command, run in the project with the normal sandbox, can be answered here.
+      if ((question.kind && question.kind !== 'command') || question.extraPermissions) return refuse;
+      if (question.cwd && !isInside(root, question.cwd)) return refuse;
       // Even reads outside the project are never automatic.
-      if (referencesOutside(root, question.command)) return mode === 'race' ? 'decline' : undefined;
-      if (isReadOnlyCommand(question.command)) return 'accept';
-      return mode === 'race' ? 'accept' : undefined;
+      if (referencesOutside(root, question.command)) return refuse;
+      if (isReadOnlyCommand(question.command) && !(commandNames(question.command).includes('git') && gitConfigRunsPrograms(question.cwd ?? root))) return 'accept';
+      if (mode === 'race') return touchesSharedDependencies(question.command) ? 'decline' : 'accept';
+      return undefined;
     }
     const inside = question.paths.length > 0 && question.paths.every((p) => isInside(root, p));
     if (mode === 'ask') return undefined;
+    if (mode === 'auto-edit' && question.paths.some(isGitMetadata)) return undefined;
     if (inside) return 'accept';
-    return mode === 'race' ? 'decline' : undefined;
+    return refuse;
   };
 }

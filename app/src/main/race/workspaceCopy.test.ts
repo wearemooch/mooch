@@ -2,8 +2,9 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { pickWinner } from './race';
-import { applyChanges, copyWorkspace, detectTestCommand, diffAgainst, removeCopy, removeTreeNoFollow, runTests, snapshot } from './workspaceCopy';
+import { pickWinner, raceNeedsConsent } from './race';
+import { linkedProject } from '../linkedProject.fixture';
+import { applyChanges, copyWorkspace, detectTestCommand, diffAgainst, removeCopy, removeTreeNoFollow, runTests, snapshot, testEnvironment } from './workspaceCopy';
 
 function project() {
   const root = mkdtempSync(path.join(tmpdir(), 'fc-race-src-'));
@@ -50,6 +51,33 @@ describe('race workspace copies', () => {
     expect(readFileSync(path.join(root, 'node_modules', 'dep', 'index.js'), 'utf8')).toBe('dep'); // the link target survives
   });
 
+  it('never applies a file through a link in the real project', async () => {
+    // The real project has `link` -> a folder beside it; copies leave links out, so a contestant can
+    // create a plain `link` folder in its copy and add files under it.
+    const { root, outside } = linkedProject();
+    writeFileSync(path.join(root, 'src', 'a.js'), 'a');
+    const baseline = await snapshot(root);
+    const copy = path.join(mkdtempSync(path.join(tmpdir(), 'fc-race-dst-')), 'c1');
+    const { links } = await copyWorkspace(root, copy);
+    expect(existsSync(path.join(copy, 'link'))).toBe(false);
+    mkdirSync(path.join(copy, 'link'));
+    writeFileSync(path.join(copy, 'link', 'authorized_keys'), 'planted');
+    writeFileSync(path.join(copy, 'src', 'ok.js'), 'ok');
+    const changes = await diffAgainst(copy, baseline);
+    expect(changes.added.sort()).toEqual([path.join('link', 'authorized_keys'), path.join('src', 'ok.js')]);
+
+    const result = await applyChanges(copy, root, baseline, changes);
+    expect(result.skipped).toEqual([path.join('link', 'authorized_keys')]);
+    expect(result.written).toEqual([path.join('src', 'ok.js')]);
+    expect(existsSync(path.join(outside, 'authorized_keys'))).toBe(false);
+    await removeCopy(copy, links);
+  });
+
+  it("runs tests without mooch's own environment variables", () => {
+    const env = testEnvironment({ PATH: '/bin', Path: 'C:\\bin', HOME: '/home/u', FREE_CODE_FCC_TOKEN: 'secret', NVIDIA_NIM_API_KEY: 'key', OPENAI_API_KEY: 'k' });
+    expect(env).toEqual({ CI: '1', PATH: '/bin', Path: 'C:\\bin', HOME: '/home/u' });
+  });
+
   it('detects and runs the test command', async () => {
     const root = project();
     expect(await detectTestCommand(root)).toBe('npm test');
@@ -60,6 +88,14 @@ describe('race workspace copies', () => {
   });
 });
 
+
+describe('raceNeedsConsent', () => {
+  it('only Full auto races without asking first', () => {
+    expect(raceNeedsConsent('ask')).toBe(true);
+    expect(raceNeedsConsent('auto-edit')).toBe(true);
+    expect(raceNeedsConsent('full-auto')).toBe(false);
+  });
+});
 
 describe('pickWinner', () => {
   const c = (id: string, linesChanged: number, passed?: boolean, status: 'done' | 'failed' = 'done') => ({
