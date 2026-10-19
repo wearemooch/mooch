@@ -26,7 +26,11 @@ permissions:
 
 env:
   GATEWAY_TAG: v6.16.9
+  # The exact commit reviewed for that tag: the installers ship this code, so a moved tag fails the build.
+  GATEWAY_COMMIT: c5239619be489ff393fff29caf838c8a5a957454
   UV_VERSION: 0.12.18
+  # A step's own env isn't visible to its `if`, so whether the key exists is decided here.
+  NIM_KEY_SET: ${{ secrets.NVIDIA_NIM_API_KEY != '' }}
 
 jobs:
   plan:
@@ -68,7 +72,13 @@ jobs:
 
       - name: Model gateway (pinned, unmodified)
         shell: bash
-        run: git clone --depth 1 --branch "$GATEWAY_TAG" https://github.com/alishahryar1/free-claude-code ../_reference/free-claude-code
+        run: |
+          git clone --depth 1 --branch "$GATEWAY_TAG" https://github.com/alishahryar1/free-claude-code ../_reference/free-claude-code
+          actual="$(git -C ../_reference/free-claude-code rev-parse HEAD)"
+          if [ "$actual" != "$GATEWAY_COMMIT" ]; then
+            echo "::error::$GATEWAY_TAG now points at $actual, not the reviewed $GATEWAY_COMMIT. Review the change before updating GATEWAY_COMMIT."
+            exit 1
+          fi
 
       - run: npm ci
 
@@ -81,7 +91,8 @@ jobs:
         shell: bash
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
-        if: ${{ env.NVIDIA_NIM_API_KEY != '' }}
+        # Never for pull requests from forks: their code would run with the key.
+        if: ${{ env.NIM_KEY_SET == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         run: |
           mkdir -p .smoke-data/fcc-home/.fcc
           printf 'NVIDIA_NIM_API_KEY=%s\n' "$NVIDIA_NIM_API_KEY" > .smoke-data/fcc-home/.fcc/.env
