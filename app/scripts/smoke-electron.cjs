@@ -29,9 +29,12 @@ app.on('browser-window-created', (_event, win) => {
     setTimeout(async () => {
       if (process.env.SMOKE_STEPS) {
         // A JSON list of {script, shot, wait}: run each script, wait, and save a screenshot named `shot`.
+        // {emit: [events]} sends agent events to the window as if the main process had (for states that
+        // are hard to cause on demand, such as a model hitting its limit).
         for (const step of JSON.parse(process.env.SMOKE_STEPS)) {
           try {
-            const result = await win.webContents.executeJavaScript(step.script);
+            for (const event of step.emit ?? []) win.webContents.send('agent:event', event);
+            const result = step.script ? await win.webContents.executeJavaScript(step.script) : undefined;
             if (result !== undefined) console.log('[smoke step]', step.shot ?? '', JSON.stringify(result));
           } catch (error) {
             console.log('[smoke step failed]', step.shot ?? '', error.message);

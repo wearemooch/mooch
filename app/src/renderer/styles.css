@@ -660,6 +660,76 @@ optgroup {
   vertical-align: top;
   overflow-wrap: anywhere;
 }
+/* Where the chat's model changed: a hairline across the chat with the reason and the way back. */
+.model-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  animation: model-divider-in 240ms ease-out;
+}
+.model-divider::before,
+.model-divider::after {
+  content: '';
+  flex: 1 1 24px;
+  height: 1px;
+  background: var(--border);
+}
+.model-divider.unavailable {
+  color: var(--busy);
+}
+.model-divider.unavailable::before,
+.model-divider.unavailable::after {
+  background: var(--busy-line);
+}
+.model-divider-body {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2px 10px;
+  max-width: 85%;
+}
+.model-divider-actions {
+  display: inline-flex;
+  gap: 10px;
+}
+.field .segmented {
+  align-self: flex-start;
+}
+/* A past chat's preview is read-only: its buttons would act on the open chat. */
+.transcript-preview .model-divider-actions {
+  display: none;
+}
+@keyframes model-divider-in {
+  from {
+    opacity: 0;
+  }
+}
+.answered-by {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+/* The picker changed by itself: a soft glow that fades, so the eye finds it. */
+.model-flash {
+  animation: model-flash 1.6s ease-out;
+}
+@keyframes model-flash {
+  from {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-line);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .model-divider,
+  .model-flash {
+    animation: none;
+  }
+}
 .transcript-note {
   display: flex;
   align-items: center;
@@ -1451,6 +1521,10 @@ optgroup {
   background: none;
   color: var(--muted);
   cursor: pointer;
+}
+.segmented button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 .segmented button.on {
   background: var(--tint);

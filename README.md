@@ -42,7 +42,7 @@ Main process ── agent engine (OpenAI Codex, app-server mode) ── local mo
 
 - The **agent engine** plans and runs the work. Its own analytics, feedback uploads and update checks are turned off.
 - The **model gateway** translates the engine's requests for the providers you add keys for, and checks keys and falls back between models. It listens on 127.0.0.1 only and requires a random per-install token.
-- **Team features** (optional): a second model reviews changes, several models plan before hard tasks ("Deep thinking"), slow requests are hedged with a backup model (a backup always steps in when a free model is overloaded or goes quiet), and "Race" runs several agents in copies of the project and keeps the version whose tests pass.
+- **Team features** (optional): a second model reviews changes, several models plan before hard tasks ("Deep thinking"), "Backup" asks a second model when the first is slow and keeps whichever answers first (Settings > Chat sets how soon), and moves the chat to it when the model hits its limit, with a divider that says so and a way back, and "Race" runs several agents in copies of the project and keeps the version whose tests pass.
 
 ## Privacy and security
 

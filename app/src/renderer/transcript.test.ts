@@ -52,6 +52,48 @@ describe('transcript reducer', () => {
     expect(isMissingKeyError('NVIDIA_NIM_API_KEY is not set.')).toBe(true);
   });
 
+  it('marks a reply written by a backup, and only that one', () => {
+    const message = (id: string): AgentEvent => ({
+      kind: 'item',
+      phase: 'completed',
+      item: { type: 'agentMessage', id, text: id, phase: null, memoryCitation: null, delivery: null, questions: null },
+    });
+    const state = run([
+      { kind: 'turnStarted', turnId: 't1' },
+      { kind: 'responder', model: 'nim/gpt-oss', requested: 'nim/nemotron' },
+      message('a1'),
+      { kind: 'responder', model: 'nim/nemotron', requested: 'nim/nemotron' },
+      message('a2'),
+    ]);
+    expect(state.entries[0]).toMatchObject({ id: 'a1', answeredBy: 'nim/gpt-oss' });
+    expect(state.entries[1]).toMatchObject({ id: 'a2' });
+    expect(state.entries[1]).not.toHaveProperty('answeredBy');
+  });
+
+  it('draws a divider when the chat moves to another model', () => {
+    const state = run([
+      { kind: 'turnStarted', turnId: 't1' },
+      { kind: 'responder', model: 'nim/gpt-oss', requested: 'nim/nemotron' },
+      { kind: 'modelSwitched', from: 'nim/nemotron', to: 'nim/gpt-oss', why: 'limit' },
+    ]);
+    expect(state.model).toBe('nim/gpt-oss');
+    // The reply in progress now comes from the chat's own model: no "answered by" on it.
+    expect(state.responder).toBeUndefined();
+    expect(state.entries).toMatchObject([{ type: 'model', variant: 'switched', from: 'nim/nemotron', to: 'nim/gpt-oss', why: 'limit' }]);
+  });
+
+  it('explains a model that could not answer once, without a second error entry', () => {
+    const error = 'No model could answer. nemotron is probably overloaded.';
+    const state = run([
+      { kind: 'turnStarted', turnId: 't1' },
+      { kind: 'modelUnavailable', model: 'nim/nemotron', alternative: 'or/qwen', why: 'limit' },
+      { kind: 'error', message: error, willRetry: false },
+      { kind: 'turnCompleted', turnId: 't1', status: 'failed', error },
+    ]);
+    expect(state.entries).toEqual([{ id: 'model-0', type: 'model', variant: 'unavailable', from: 'nim/nemotron', to: 'or/qwen', why: 'limit' }]);
+    expect(state.running).toBe(false);
+  });
+
   it('keeps one note per message when a backup model steps in', () => {
     const note: AgentEvent = { kind: 'status', message: 'b stepped in for a, which was busy.', note: true };
     const first = run([note, { kind: 'status', message: 'passing' }, note], { ...emptyTranscript, entries: [{ id: 'u1', type: 'user', text: 'hi' }] });

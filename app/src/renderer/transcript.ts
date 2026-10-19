@@ -3,7 +3,8 @@ import type { AgentEvent, ApprovalDecision, ApprovalRequest, CouncilState, FileU
 
 export type Entry =
   | { id: string; type: 'user'; text: string }
-  | { id: string; type: 'agent'; text: string; done: boolean }
+  /** `answeredBy`: a backup model wrote this reply because the chat's model was slow. */
+  | { id: string; type: 'agent'; text: string; done: boolean; answeredBy?: string }
   | { id: string; type: 'reasoning'; text: string; done: boolean }
   | { id: string; type: 'command'; command: string; cwd: string; output: string; status: string; exitCode: number | null; durationMs: number | null }
   | { id: string; type: 'fileChange'; changes: FileUpdateChange[]; status: string }
@@ -12,6 +13,11 @@ export type Entry =
   | { id: string; type: 'approval'; request: ApprovalRequest; resolved?: ApprovalDecision | 'resolved' }
   | { id: string; type: 'error'; text: string }
   | { id: string; type: 'note'; text: string }
+  /**
+   * The chat's model couldn't answer. 'switched': the chat moved to `to` (it answered instead).
+   * 'unavailable': nothing answered; `to` is a model worth trying.
+   */
+  | { id: string; type: 'model'; variant: 'switched' | 'unavailable'; from: string; to?: string; why: 'limit' | 'failed' | 'silent' }
   /** A local answer to a slash command (/help, /usage); never sent to the model or saved. */
   | { id: string; type: 'info'; text: string }
   /** The engine summarized everything above; the model only sees the summary from here on. */
@@ -29,6 +35,14 @@ export interface TranscriptState {
   tokenUsage?: ThreadTokenUsage;
   threadId?: string;
   model?: string;
+  /** A backup model is answering the current request (not the one the chat asked for). */
+  responder?: string;
+}
+
+/** The "no model answered" card already explains the turn's failure; its error text would repeat it. */
+function explainedByCard(entries: Entry[]): boolean {
+  const last = entries.at(-1);
+  return last?.type === 'model' && last.variant === 'unavailable';
 }
 
 export const emptyTranscript: TranscriptState = { entries: [], running: false };
@@ -110,20 +124,37 @@ export function applyEvent(state: TranscriptState, event: AgentEvent): Transcrip
     case 'thread':
       return { ...emptyTranscript, threadId: event.threadId, model: event.model };
     case 'turnStarted':
-      return { ...state, running: true, retrying: undefined };
+      return { ...state, running: true, retrying: undefined, responder: undefined };
     case 'turnCompleted': {
       let entries = state.entries;
       const last = entries.at(-1);
-      if (event.status === 'failed' && event.error && !(last?.type === 'error' && last.text === event.error)) {
+      if (event.status === 'failed' && event.error && !(last?.type === 'error' && last.text === event.error) && !explainedByCard(entries)) {
         entries = [...entries, { id: `error-${event.turnId}`, type: 'error', text: event.error }];
       }
-      return { ...state, entries, running: false, retrying: undefined };
+      return { ...state, entries, running: false, retrying: undefined, responder: undefined };
     }
     case 'item': {
       const existing = state.entries.find((entry) => entry.id === event.item.id);
-      const entry = fromItem(event.item, event.phase === 'completed', existing);
+      let entry = fromItem(event.item, event.phase === 'completed', existing);
+      if (entry?.type === 'agent' && state.responder) entry = { ...entry, answeredBy: state.responder };
       return entry ? { ...state, entries: upsert(state.entries, entry) } : state;
     }
+    case 'responder':
+      return { ...state, responder: event.model === event.requested ? undefined : event.model };
+    case 'modelSwitched':
+      return {
+        ...state,
+        model: event.to,
+        // The reply in progress already comes from the new model, so it needs no "answered by".
+        responder: undefined,
+        entries: [...state.entries, { id: `model-${state.entries.length}`, type: 'model', variant: 'switched', from: event.from, to: event.to, why: event.why }],
+      };
+    case 'modelUnavailable':
+      return {
+        ...state,
+        retrying: undefined,
+        entries: [...state.entries, { id: `model-${state.entries.length}`, type: 'model', variant: 'unavailable', from: event.model, to: event.alternative, why: event.why }],
+      };
     case 'agentDelta':
       return {
         ...state,
@@ -155,6 +186,7 @@ export function applyEvent(state: TranscriptState, event: AgentEvent): Transcrip
       };
     case 'error':
       if (event.willRetry) return { ...state, retrying: event.message };
+      if (explainedByCard(state.entries)) return { ...state, retrying: undefined };
       return { ...state, retrying: undefined, entries: [...state.entries, { id: `error-${state.entries.length}-${Date.now()}`, type: 'error', text: event.message }] };
     case 'tokenUsage':
       return { ...state, tokenUsage: event.usage };

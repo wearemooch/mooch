@@ -1,7 +1,7 @@
 // Settings: model providers (keys), appearance, about, and acknowledgements of the software the app is built on.
 import { BookOpen, Cpu, ChatText, Check, Heart, Info, Palette, PlugsConnected, X, type Icon } from '@phosphor-icons/react';
 import { useEffect, useState } from 'react';
-import type { AboutInfo, ProviderInfo } from '../../shared/ipc';
+import { BACKUP_DELAY_CHOICES, type AboutInfo, type ProviderInfo } from '../../shared/ipc';
 import { AGENT_NAME } from '../../shared/brand';
 import { THEMES, type ThemeInfo, type ThemeSetting } from '../../shared/themes';
 import { ACKNOWLEDGEMENTS } from '../acknowledgements';
@@ -230,6 +230,30 @@ function ChatPage() {
   if (!settings) return null;
   return (
     <>
+      <h3>Backup model</h3>
+      <p className="muted">
+        Free models are sometimes slow or full. With Backup on, a second model is asked too when the first is slow, and whichever answers first is used. If your
+        model hits its limit, the chat switches to the backup and tells you, with a way back.
+      </p>
+      <div className="field">
+        <span id="backup-delay">When the model is slow, also ask a backup after</span>
+        <div className="segmented" role="radiogroup" aria-labelledby="backup-delay">
+          {BACKUP_DELAY_CHOICES.map((ms) => (
+            <button
+              key={ms}
+              type="button"
+              role="radio"
+              aria-checked={settings.hedgeDelayMs === ms}
+              className={settings.hedgeDelayMs === ms ? 'on' : ''}
+              disabled={!settings.hedge}
+              onClick={() => void updateSettings({ hedgeDelayMs: ms })}
+            >
+              {ms / 1000}s
+            </button>
+          ))}
+        </div>
+      </div>
+      {!settings.hedge && <p className="muted small">Turn on Backup (under the model picker) to use this. While it's off, only the model you picked answers.</p>}
       <h3>Compaction</h3>
       <p className="muted">
         Long chats resend everything to the model on every step, which uses up free-tier limits and slows models down. Compaction replaces the chat so far with a summary

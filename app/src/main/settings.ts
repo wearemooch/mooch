@@ -1,14 +1,14 @@
 // User settings for the team features, stored as JSON in the app's data folder.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import type { FreeCodeSettings, TeamSettings } from '../shared/ipc';
+import { BACKUP_DELAY_CHOICES, type FreeCodeSettings, type TeamSettings } from '../shared/ipc';
 import { isThemeSetting } from '../shared/themes';
 
 export const DEFAULT_SETTINGS: FreeCodeSettings = {
   review: true,
   deep: false,
   hedge: true,
-  hedgeDelayMs: 12_000,
+  hedgeDelayMs: 10_000,
   editTool: 'auto',
   team: {},
   theme: 'system',
@@ -51,7 +51,11 @@ export function mergeSettings(base: FreeCodeSettings, patch: unknown): FreeCodeS
   const p = (patch && typeof patch === 'object' ? patch : {}) as Record<string, unknown>;
   const next: FreeCodeSettings = { ...base, team: { ...base.team } };
   for (const key of ['review', 'deep', 'hedge'] as const) if (typeof p[key] === 'boolean') next[key] = p[key];
-  if (typeof p.hedgeDelayMs === 'number' && Number.isFinite(p.hedgeDelayMs)) next.hedgeDelayMs = Math.min(120_000, Math.max(2_000, Math.round(p.hedgeDelayMs)));
+  if (typeof p.hedgeDelayMs === 'number' && Number.isFinite(p.hedgeDelayMs)) {
+    // The nearest of the offered choices, so an older value (12s) lands on one the page can show.
+    const wanted = p.hedgeDelayMs;
+    next.hedgeDelayMs = BACKUP_DELAY_CHOICES.reduce((best, choice) => (Math.abs(choice - wanted) < Math.abs(best - wanted) ? choice : best));
+  }
   if (EDIT_TOOLS.includes(p.editTool as FreeCodeSettings['editTool'])) next.editTool = p.editTool as FreeCodeSettings['editTool'];
   if ('raceTestCommand' in p) {
     const command = typeof p.raceTestCommand === 'string' ? p.raceTestCommand.trim().slice(0, 500) : '';

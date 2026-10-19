@@ -57,7 +57,7 @@ function RaceConsentCard({ testCommand }: { testCommand?: string }) {
 }
 
 export function AgentPanel() {
-  const { models, model, mode, transcript, codex, codexMessage, notice, fcc, workspace, lastActivity, busyUntil, raceConsent } = useApp();
+  const { models, model, mode, transcript, codex, codexMessage, notice, fcc, workspace, lastActivity, busyUntil, raceConsent, modelFlash } = useApp();
   const isBusy = (slug: string) => (busyUntil[slug] ?? 0) > Date.now();
   const silenceLabel = useWorkingLabel(transcript.running, lastActivity);
   const awaitingYou = transcript.entries.some((e) => e.type === 'approval' && !e.resolved);
@@ -165,7 +165,8 @@ export function AgentPanel() {
     <aside className="agent-panel" aria-label={AGENT_NAME}>
       <div className="agent-head">
         <span className="agent-name">{AGENT_NAME}</span>
-        <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model" title="Switches from your next message">
+        {/* Remounted when the chat switches models by itself, so the highlight plays once. */}
+        <select key={modelFlash ?? 'model'} className={modelFlash ? 'model-flash' : undefined} value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model" title="Switches from your next message">
           {models.length === 0 && <option value="">No models yet</option>}
           {groupByProvider(models).map((group) => (
             <optgroup key={group.provider} label={group.provider}>

@@ -2,6 +2,7 @@
 // approvals and the team features. Shared by Penny's panel and the session browser's preview.
 import { ArrowsInLineVertical, PlugsConnected, CheckCircle, GitDiff, HourglassMedium, Info, PencilSimpleLine, Warning, XCircle } from '@phosphor-icons/react';
 import { AGENT_NAME } from '../../shared/brand';
+import { shortModelName } from '../../shared/modelNames';
 import { useApp } from '../store';
 import { displayCommand, groupForDisplay, isMissingKeyError, workSummary, type Entry, type TranscriptState } from '../transcript';
 import { Collapsible } from './Collapsible';
@@ -23,8 +24,15 @@ function EntryView({ entry }: { entry: Entry }) {
         <div className="msg agent">
           <div className="msg-author">{AGENT_NAME}</div>
           {entry.text ? <Markdown text={entry.text} /> : '…'}
+          {entry.answeredBy && entry.done && (
+            <div className="answered-by" title="The chosen model was slow, so a backup model wrote this reply">
+              answered by {shortModelName(entry.answeredBy)}
+            </div>
+          )}
         </div>
       );
+    case 'model':
+      return <ModelDivider entry={entry} />;
     case 'reasoning':
       return entry.text ? (
         <Collapsible title={<span className="muted">{entry.done ? 'Thought' : 'Thinking…'}</span>}>
@@ -206,6 +214,49 @@ function WorkBlock({ entries, live }: { entries: Entry[]; live: boolean }) {
 }
 
 /** Every entry of a transcript, with the agent's work between messages folded into blocks. */
+const WHY: Record<Extract<Entry, { type: 'model' }>['why'], string> = {
+  limit: 'hit its limit',
+  failed: 'stopped answering',
+  silent: "didn't answer in time",
+};
+
+/** Where the chat's model changed (or couldn't answer), with the one-click way back or forward. */
+function ModelDivider({ entry }: { entry: Extract<Entry, { type: 'model' }> }) {
+  const { setModel, retryLast } = useApp.getState();
+  const running = useApp((s) => s.transcript.running);
+  const from = shortModelName(entry.from);
+  const to = entry.to && shortModelName(entry.to);
+  return (
+    <div className={`model-divider ${entry.variant}`} role="status">
+      {/* Text and actions wrap together, centered between the two hairlines. */}
+      <span className="model-divider-body">
+        <span>
+          {from} {WHY[entry.why]}
+          {entry.variant === 'switched' && to && <> · Switched to {to}</>}
+        </span>
+        <span className="model-divider-actions">
+        {entry.variant === 'switched' ? (
+          <button className="link" onClick={() => setModel(entry.from)} title={`Use ${from} again from your next message`}>
+            Switch back
+          </button>
+        ) : (
+          <>
+            {entry.to && to && (
+              <button className="link" disabled={running} onClick={() => void retryLast(entry.to)} title={`Switch the chat to ${to} and send your message again`}>
+                Use {to}
+              </button>
+            )}
+            <button className="link" disabled={running} onClick={() => void retryLast()} title={`Send your message to ${from} again`}>
+              Try again
+            </button>
+          </>
+        )}
+        </span>
+      </span>
+    </div>
+  );
+}
+
 export function TranscriptEntries({ transcript }: { transcript: TranscriptState }) {
   return (
     <>

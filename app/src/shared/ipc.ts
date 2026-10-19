@@ -92,13 +92,20 @@ export interface TeamSettings {
   contestants?: string[];
 }
 
+/** The choices for FreeCodeSettings.hedgeDelayMs (Settings > Chat > Backup model). */
+export const BACKUP_DELAY_CHOICES = [5_000, 10_000, 20_000, 30_000];
+
 export interface FreeCodeSettings {
   /** Second-model review after turns that edit files. */
   review: boolean;
   /** Plan council before each message ("Deep thinking"). */
   deep: boolean;
-  /** Send slow requests to a backup model too, and keep whichever answers first. */
+  /**
+   * "Backup" in the UI: send slow requests to a backup model too and keep whichever answers first,
+   * and move the chat to the backup when its model hits a limit. Off: only the chosen model answers.
+   */
   hedge: boolean;
+  /** How long the model may be slow before the backup is asked too; one of BACKUP_DELAY_CHOICES. */
   hedgeDelayMs: number;
   /** How models edit files: Codex's apply_patch, mooch's edit_file/write_file, or auto (edit tools for non-OpenAI models). */
   editTool: 'auto' | 'apply_patch' | 'edit_file';
@@ -320,7 +327,13 @@ export type AgentEvent =
   | { kind: 'restorePoint'; point: RestorePoint }
   | { kind: 'restored'; result: RestoreResult }
   /** Models that failed or stalled recently → when they stop counting as busy (epoch ms). */
-  | { kind: 'modelHealth'; busyUntil: Record<string, number> };
+  | { kind: 'modelHealth'; busyUntil: Record<string, number> }
+  /** Which model answered the latest model request (a backup may answer for a slow model). */
+  | { kind: 'responder'; model: string; requested: string }
+  /** The chat's model hit its limit or kept failing, so the chat moved to the backup that answered. */
+  | { kind: 'modelSwitched'; from: string; to: string; why: 'limit' | 'failed' }
+  /** No model answered; `alternative` is one worth trying. */
+  | { kind: 'modelUnavailable'; model: string; alternative?: string; why: 'limit' | 'failed' | 'silent' };
 
 export interface NewThreadOptions {
   model: string;

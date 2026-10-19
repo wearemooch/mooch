@@ -16,13 +16,36 @@ export interface HedgeConfig {
   /** Hedging: ask the backup once the model is slow (after `delayMs`), not only when it stalls. */
   enabled(): boolean;
   delayMs(): number;
-  /** `note`: worth keeping in the transcript (a backup model answered), not just a passing status. */
+  /** A passing status while waiting ("X is slow right now. Asked Y too."). */
   onStatus(message: string, note?: boolean): void;
+  /** Which model answered a request: the one asked for, or a backup and why it stood in. */
+  onAnswered?(answer: Answer): void;
+  /** No model answered the request; it ends with an error. */
+  onUnavailable?(failure: Unavailable): void;
   health?: ModelHealth;
   /** No output for this long counts as a stall, even with hedging off. */
   stallMs?: number;
   /** No output from any model for this long ends the request with an error. */
   giveUpMs?: number;
+}
+
+/**
+ * Why a backup answered instead of the model asked for. 'overloaded' (its limit, or the provider is
+ * full) and 'failing' mean it is out for a while; the others mean it was merely slower this time.
+ */
+export type StandInReason = 'slow' | 'not answering' | 'busy' | 'overloaded' | 'failing';
+
+export interface Answer {
+  requested: string;
+  model: string;
+  reason?: StandInReason;
+}
+
+export interface Unavailable {
+  requested: string;
+  tried: string[];
+  /** 'limit': rate-limited or overloaded; 'failed': errors; 'silent': no answer in time. */
+  why: 'limit' | 'failed' | 'silent';
 }
 
 const STALL_MS = 40_000;
@@ -166,7 +189,7 @@ export class HedgeProxy {
     let settled = false;
     let backupStarted = false;
     let primaryStarted = false;
-    let backupReason = 'slow';
+    let backupReason: StandInReason = 'slow';
     let resolveDone!: () => void;
     const done = new Promise<void>((resolve) => (resolveDone = resolve));
     const timers: NodeJS.Timeout[] = [];
@@ -187,6 +210,8 @@ export class HedgeProxy {
       if (settled) return;
       settle();
       abortAll();
+      const why = attempts.some((a) => isOverloaded(a.status)) ? 'limit' : attempts.some((a) => a.status !== undefined) ? 'failed' : 'silent';
+      this.config.onUnavailable?.({ requested: primary, tried: attempts.map((a) => a.model), why });
       res.writeHead(400, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { type: 'model_unavailable', message } }));
       resolveDone();
@@ -203,6 +228,10 @@ export class HedgeProxy {
       if (settled) return;
       const clientError = attempt.status !== undefined && attempt.status >= 400 && attempt.status < 500 && !isOverloaded(attempt.status);
       if (!clientError) this.health.markBusy(attempt.model);
+      if (attempt.model === primary && !clientError && backupStarted) {
+        // The backup was already asked because the model was slow; now the model failed outright.
+        backupReason = isOverloaded(attempt.status) ? 'overloaded' : 'failing';
+      }
       if (attempt.model === primary && backupModel && !backupStarted) {
         return void startBackup(isOverloaded(attempt.status) ? 'is overloaded right now' : 'failed', isOverloaded(attempt.status) ? 'overloaded' : 'failing');
       }
@@ -230,7 +259,7 @@ export class HedgeProxy {
         // The model we left behind never produced anything; steer around it for a while.
         if (other.model === primary) this.health.markBusy(primary);
       }
-      if (attempt.model !== primary) this.config.onStatus(`${shortModelName(attempt.model)} stepped in for ${shortModelName(primary)}, which was ${backupReason}.`, true);
+      this.config.onAnswered?.(attempt.model === primary ? { requested: primary, model: primary } : { requested: primary, model: attempt.model, reason: backupReason });
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
       for (const chunk of attempt.buffered) res.write(chunk);
       attempt.buffered = [];
@@ -286,7 +315,7 @@ export class HedgeProxy {
       }
     };
 
-    const startBackup = (reason: string, past: string) => {
+    const startBackup = (reason: string, past: StandInReason) => {
       if (backupStarted || settled || !backupModel) return;
       backupStarted = true;
       backupReason = past;

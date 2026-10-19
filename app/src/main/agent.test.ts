@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentController } from './agent';
 import type { FccSidecar } from './fcc/sidecar';
+import type { AgentEvent } from '../shared/ipc';
 import { DEFAULT_SETTINGS, type SettingsStore } from './settings';
 import type { PromptLibrary } from './team/prompts';
 
@@ -44,7 +45,8 @@ vi.mock('./codex/appServer', async (importOriginal) => ({ ...(await importOrigin
 let agent: AgentController | undefined;
 afterEach(() => agent?.dispose());
 
-function controller() {
+function controller(settings: Partial<typeof DEFAULT_SETTINGS> = {}) {
+  const events: AgentEvent[] = [];
   const dir = mkdtempSync(path.join(tmpdir(), 'mooch-agent-'));
   const project = path.join(dir, 'project');
   mkdirSync(project);
@@ -58,11 +60,11 @@ function controller() {
     raceRoot: path.join(dir, 'races'),
     checkpointRoot: path.join(dir, 'checkpoints'),
     prompts: { render: () => '' } as unknown as PromptLibrary,
-    settings: { get: () => ({ ...DEFAULT_SETTINGS, hedge: false }) } as unknown as SettingsStore,
-    emit: () => undefined,
+    settings: { get: () => ({ ...DEFAULT_SETTINGS, hedge: false, ...settings }) } as unknown as SettingsStore,
+    emit: (event) => void events.push(event),
   });
   agent.setWorkspace(project);
-  return { agent, project };
+  return { agent, project, events };
 }
 
 describe('AgentController', () => {
@@ -78,6 +80,32 @@ describe('AgentController', () => {
     // A later model change keeps the open chat's permissions.
     await agent.updateChat({ model: 'm2' });
     expect(codex.turnOverrides).toMatchObject({ approvalPolicy: 'untrusted' });
+  });
+
+  it('moves the chat to the backup when its model hits a limit, but not when it was just slow', async () => {
+    const { agent, events } = controller();
+    await agent.newThread({ model: 'nim/nemotron', mode: 'ask' });
+    const answered = (answer: unknown) => (agent as unknown as { onAnswered(a: unknown): void }).onAnswered(answer);
+
+    answered({ requested: 'nim/nemotron', model: 'nim/gpt-oss', reason: 'slow' });
+    expect(events.filter((e) => e.kind === 'modelSwitched')).toEqual([]);
+    expect(events.at(-1)).toEqual({ kind: 'responder', model: 'nim/gpt-oss', requested: 'nim/nemotron' });
+
+    answered({ requested: 'nim/nemotron', model: 'nim/gpt-oss', reason: 'overloaded' });
+    expect(events.filter((e) => e.kind === 'modelSwitched')).toEqual([{ kind: 'modelSwitched', from: 'nim/nemotron', to: 'nim/gpt-oss', why: 'limit' }]);
+    // The next message goes to the new model, with the chat's permissions unchanged.
+    expect(fakes.FakeCodex.last!.turnOverrides).toMatchObject({ model: 'nim/gpt-oss', approvalPolicy: 'untrusted' });
+
+    // The rest of the turn still asks for the old model; those answers come from the chat's own model now.
+    answered({ requested: 'nim/nemotron', model: 'nim/gpt-oss', reason: 'busy' });
+    expect(events.at(-1)).toEqual({ kind: 'responder', model: 'nim/gpt-oss', requested: 'nim/gpt-oss' });
+    expect(events.filter((e) => e.kind === 'modelSwitched')).toHaveLength(1);
+  });
+
+  it('with Backup off, only the chosen model answers', () => {
+    const { agent } = controller({ hedge: false });
+    const backupsFor = (model: string) => (agent as unknown as { backupsFor(m: string): string[] }).backupsFor(model);
+    expect(backupsFor('nim/nemotron')).toEqual([]);
   });
 
   it('races outside Full auto need the user to agree first', async () => {

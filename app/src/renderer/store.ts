@@ -60,6 +60,10 @@ interface AppState {
   openFolder(): Promise<void>;
   loadModels(): Promise<void>;
   setModel(model: string): void;
+  /** When the picker last changed by itself (the chat moved to a backup model), to draw the eye to it. */
+  modelFlash?: number;
+  /** Sends the last message again, optionally on another model first ("Try again", "Use X"). */
+  retryLast(model?: string): Promise<void>;
   setMode(mode: ApprovalMode): void;
   newChat(): Promise<void>;
   send(text: string, options?: { deep?: boolean; skill?: { name: string; path: string } }): Promise<void>;
@@ -170,7 +174,9 @@ export const useApp = create<AppState>((set, get) => ({
 
   setModel(model) {
     writePreference(MODEL_KEY, model);
-    set({ model });
+    // The open chat's model changes too, so the status bar says who answers next.
+    const transcript = get().transcript;
+    set({ model, transcript: transcript.threadId ? { ...transcript, model } : transcript });
     void get().loadTeam();
     // An open chat switches from the next message on.
     if (get().transcript.threadId) void api.agent.update({ model }).catch((error) => set({ notice: errorMessage(error) }));
@@ -412,6 +418,19 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  async retryLast(model) {
+    const last = [...get().transcript.entries].reverse().find((e) => e.type === 'user');
+    if (!last || last.type !== 'user' || get().transcript.running) return;
+    if (model && model !== get().model) {
+      writePreference(MODEL_KEY, model);
+      set({ model, modelFlash: Date.now(), transcript: { ...get().transcript, model } });
+      void get().loadTeam();
+      // Applied before the message goes out, so the retry already uses the new model.
+      await api.agent.update({ model }).catch((error) => set({ notice: errorMessage(error) }));
+    }
+    await get().send(last.text);
+  },
+
   async send(text, options = {}) {
     try {
       if (!get().transcript.threadId) await get().newChat();
@@ -436,6 +455,13 @@ export const useApp = create<AppState>((set, get) => ({
   onAgentEvent(event) {
     if (event.kind === 'codex') set({ codex: event.state, codexMessage: event.message });
     if (event.kind === 'modelHealth') return void set({ busyUntil: event.busyUntil });
+    if (event.kind === 'modelSwitched') {
+      // The main process already moved the chat; the picker follows (no update call back), and flashes
+      // so the eye connects the divider in the chat to the control that changed.
+      writePreference(MODEL_KEY, event.to);
+      set({ model: event.to, modelFlash: Date.now() });
+      void get().loadTeam();
+    }
     // FCC retry notices aren't model output, so they don't count as activity.
     const activity = event.kind === 'error' && event.willRetry ? {} : { lastActivity: Date.now() };
     set({ transcript: applyEvent(get().transcript, event), ...activity });

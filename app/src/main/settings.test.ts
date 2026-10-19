@@ -14,7 +14,7 @@ describe('mergeSettings', () => {
       review: 'yes', hedgeDelayMs: 1, editTool: 'rm -rf', raceTestCommand: 'npm test\ncurl evil', team: { reviewer: '<script>', judge: 'nvidia_nim/z-ai/glm-5.3' }, extra: 1,
     });
     expect(next.review).toBe(true);
-    expect(next.hedgeDelayMs).toBe(2000);
+    expect(next.hedgeDelayMs).toBe(5000);
     expect(next.editTool).toBe('auto');
     expect(next.raceTestCommand).toBeUndefined();
     expect(next.team).toEqual({ judge: 'nvidia_nim/z-ai/glm-5.3' });
@@ -25,6 +25,15 @@ describe('mergeSettings', () => {
     const withCommand = mergeSettings(base, { raceTestCommand: ' npm test ' });
     expect(withCommand.raceTestCommand).toBe('npm test');
     expect(mergeSettings(withCommand, { raceTestCommand: undefined }).raceTestCommand).toBeUndefined();
+  });
+
+  it('backs up after one of the offered delays, on by default', () => {
+    expect(DEFAULT_SETTINGS.hedge).toBe(true);
+    expect(DEFAULT_SETTINGS.hedgeDelayMs).toBe(10_000);
+    expect(mergeSettings(base, { hedgeDelayMs: 20_000 }).hedgeDelayMs).toBe(20_000);
+    // An older saved value lands on the nearest choice the settings page can show.
+    expect(mergeSettings(base, { hedgeDelayMs: 12_000 }).hedgeDelayMs).toBe(10_000);
+    expect(mergeSettings(base, { hedgeDelayMs: 600_000 }).hedgeDelayMs).toBe(30_000);
   });
 
   it('accepts only the offered auto-compaction limits', () => {

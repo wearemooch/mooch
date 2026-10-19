@@ -9,7 +9,12 @@ import { useApp } from '../store';
 const TOGGLES: { key: 'deep' | 'review' | 'hedge'; label: string; icon: Icon; hint: string }[] = [
   { key: 'deep', label: 'Deep thinking', icon: Brain, hint: 'Before each message, 3 models plan and a judge merges the plans (+4 calls)' },
   { key: 'review', label: 'Review', icon: Eye, hint: `A second model reviews every change and ${AGENT_NAME} fixes what it flags (+1 call)` },
-  { key: 'hedge', label: 'Hedge', icon: ArrowsSplit, hint: 'If the model is slow (after a few seconds), also ask a backup model and keep whichever answers first. Even when off, a backup steps in if the model fails or goes quiet for 40s.' },
+  {
+    key: 'hedge',
+    label: 'Backup',
+    icon: ArrowsSplit,
+    hint: 'If the model is slow, also ask a backup model and keep whichever answers first (Settings > Chat sets how soon). If it hits its limit, the chat switches to the backup. Off: only the model you picked answers.',
+  },
 ];
 
 function RoleSelect({ label, value, auto, onChange }: { label: string; value?: string; auto?: string; onChange: (v?: string) => void }) {

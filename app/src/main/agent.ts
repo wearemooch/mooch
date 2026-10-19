@@ -12,7 +12,7 @@ import { createEditToolHandler, usesEditTools, writeDerivedCatalog } from './cod
 import { EDIT_TOOL_SPECS } from './codex/editTools';
 import { buildCodexLaunch } from './codex/launch';
 import type { FccSidecar } from './fcc/sidecar';
-import { HedgeProxy } from './llm/hedge';
+import { HedgeProxy, type Answer, type Unavailable } from './llm/hedge';
 import { ModelHealth } from './llm/modelHealth';
 import { oneShot } from './llm/oneShot';
 import { RACE_CONSENT_REQUIRED, RaceRunner, raceNeedsConsent } from './race/race';
@@ -76,12 +76,13 @@ export class AgentController {
     this.health = new ModelHealth((busyUntil) => options.emit({ kind: 'modelHealth', busyUntil }));
     this.hedge = new HedgeProxy({
       upstream: () => (fcc.url && fcc.getStatus().state === 'running' ? { url: fcc.url, token: fcc.token } : undefined),
-      // The team's backup first, then the next-best models, so a busy backup has stand-ins too.
-      backupsFor: (model) => [...(this.team?.executor === model && this.team.backup ? [this.team.backup] : []), ...pickModels(this.models, 4, [model])],
+      backupsFor: (model) => this.backupsFor(model),
       health: this.health,
       enabled: () => settings.get().hedge,
       delayMs: () => settings.get().hedgeDelayMs,
       onStatus: (message, note) => options.emit({ kind: 'status', message, note }),
+      onAnswered: (answer) => this.onAnswered(answer),
+      onUnavailable: (failure) => this.onUnavailable(failure),
     });
     this.race = new RaceRunner({
       codexBinary: options.codexBinary,
@@ -400,6 +401,40 @@ export class AgentController {
   }
 
   /** Watches the main agent's events to collect what the review needs. */
+  /**
+   * Models that may answer for `model`: the team's backup first, then the next-best models. With
+   * Backup off there are none, since the user wants this model and no other. Only models that use
+   * the same edit tools qualify, because a chat can't change its tools halfway.
+   */
+  private backupsFor(model: string): string[] {
+    if (!this.options.settings.get().hedge) return [];
+    const sameTools = (slug: string) => this.useEditTools(slug) === this.useEditTools(model);
+    const team = this.team?.executor === model && this.team.backup ? [this.team.backup] : [];
+    return [...new Set([...team, ...pickModels(this.models, 4, [model])])].filter((slug) => slug !== model && sameTools(slug));
+  }
+
+  /** A backup answered because the chat's model hit its limit: the chat moves to it, and says so. */
+  private onAnswered(answer: Answer): void {
+    // Compared with the chat's model: after a switch, the old model's requests are answered by the chat's own.
+    this.options.emit({ kind: 'responder', model: answer.model, requested: this.threadOptions?.model ?? answer.requested });
+    if (answer.reason !== 'overloaded' && answer.reason !== 'failing') return;
+    const options = this.threadOptions;
+    if (!options || options.model !== answer.requested || !this.codex?.currentThreadId) return;
+    this.threadOptions = { ...options, model: answer.model };
+    this.codex.turnOverrides = { model: answer.model, ...turnPermissions(options.mode) };
+    void this.resolveTeam(answer.model).catch(() => undefined);
+    this.options.emit({ kind: 'modelSwitched', from: answer.requested, to: answer.model, why: answer.reason === 'overloaded' ? 'limit' : 'failed' });
+  }
+
+  /** No model answered the chat's request: suggest one that wasn't tried and isn't busy. */
+  private onUnavailable(failure: Unavailable): void {
+    const options = this.threadOptions;
+    if (!options || options.model !== failure.requested) return;
+    const sameTools = (slug: string) => this.useEditTools(slug) === this.useEditTools(failure.requested);
+    const alternative = pickModels(this.models, 6, failure.tried).find((slug) => sameTools(slug) && !this.health.isBusy(slug));
+    this.options.emit({ kind: 'modelUnavailable', model: failure.requested, alternative, why: failure.why });
+  }
+
   private onEvent(event: AgentEvent): void {
     this.options.emit(event);
     const turn = this.turn;

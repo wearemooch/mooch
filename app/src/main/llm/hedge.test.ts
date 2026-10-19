@@ -1,7 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { HedgeProxy, rejectReason, type HedgeConfig } from './hedge';
+import { HedgeProxy, rejectReason, type Answer, type HedgeConfig, type Unavailable } from './hedge';
 import { ModelHealth } from './modelHealth';
 
 // Fake FCC: "fast" streams at once, "slow" waits, "bad" fails, "busy" is overloaded (529),
@@ -28,6 +28,8 @@ const upstream = http.createServer(async (req, res) => {
 
 let upstreamUrl = '';
 const statuses: string[] = [];
+const answers: Answer[] = [];
+const failures: Unavailable[] = [];
 const proxies: HedgeProxy[] = [];
 
 function makeProxy(overrides: Partial<HedgeConfig> = {}): HedgeProxy {
@@ -37,6 +39,8 @@ function makeProxy(overrides: Partial<HedgeConfig> = {}): HedgeProxy {
     enabled: () => true,
     delayMs: () => 200,
     onStatus: (m) => statuses.push(m),
+    onAnswered: (a) => answers.push(a),
+    onUnavailable: (f) => failures.push(f),
     ...overrides,
   });
   proxies.push(proxy);
@@ -55,6 +59,8 @@ beforeAll(async () => {
 afterEach(() => {
   calls.length = 0;
   statuses.length = 0;
+  answers.length = 0;
+  failures.length = 0;
 });
 afterAll(() => {
   proxies.forEach((p) => p.stop());
@@ -75,7 +81,9 @@ describe('HedgeProxy', () => {
     expect(result.text).toContain('from fast');
     expect(result.text).not.toContain('from slow');
     expect(calls).toEqual(['slow', 'fast']);
-    expect(statuses.join(' ')).toMatch(/slow is slow.*fast stepped in for slow, which was slow/);
+    expect(statuses.join(' ')).toMatch(/slow is slow right now. Asked fast too/);
+    // Merely slow: the backup answered this once, which is not a reason to switch the chat.
+    expect(answers).toEqual([{ requested: 'slow', model: 'fast', reason: 'slow' }]);
   });
 
   it('starts the backup at once when the primary fails, is overloaded or goes silent', async () => {
@@ -87,6 +95,8 @@ describe('HedgeProxy', () => {
       expect(calls).toEqual([primary, 'fast']);
     }
     expect(statuses.join(' ')).toMatch(/busy is overloaded right now/);
+    // Overloaded (its limit) and failing are the reasons the chat moves to the backup.
+    expect(answers.map((a) => a.reason)).toEqual(['failing', 'overloaded', 'failing']);
   });
 
   it('with hedging off, waits for a slow model instead of asking the backup', async () => {
@@ -110,9 +120,10 @@ describe('HedgeProxy', () => {
     expect(health.isBusy('fast')).toBe(false);
     calls.length = 0;
     statuses.length = 0;
+    answers.length = 0;
     expect((await ask(proxy, 'busy')).text).toContain('from fast');
     expect(calls).toEqual(['fast']);
-    expect(statuses).toEqual(['fast stepped in for busy, which was busy.']);
+    expect(answers).toEqual([{ requested: 'busy', model: 'fast', reason: 'busy' }]);
   });
 
   it('gives a skipped busy model another try when its backup fails', async () => {
@@ -138,12 +149,21 @@ describe('HedgeProxy', () => {
     expect(result.status).toBe(400);
     expect(JSON.parse(result.text).error.message).toMatch(/No answer after 0s\. hang and hang2 are probably overloaded/);
     expect(health.isBusy('hang')).toBe(true);
+    expect(failures).toEqual([{ requested: 'hang', tried: ['hang', 'hang2'], why: 'silent' }]);
   });
 
   it('fails fast with a plain message when the only model is overloaded', async () => {
     const result = await ask(makeProxy({ backupsFor: () => [] }), 'busy');
     expect(result.status).toBe(400);
     expect(JSON.parse(result.text).error.message).toMatch(/No model could answer\. busy is probably overloaded/);
+    // With no backup (Backup off), the chat says the model hit its limit and offers what to do.
+    expect(failures).toEqual([{ requested: 'busy', tried: ['busy'], why: 'limit' }]);
+    expect(answers).toEqual([]);
+  });
+
+  it('reports a failing model as failed, not as a limit', async () => {
+    await ask(makeProxy({ backupsFor: () => [] }), 'bad');
+    expect(failures).toEqual([{ requested: 'bad', tried: ['bad'], why: 'failed' }]);
   });
 
   it('passes a rejected request through unchanged when the backup fails too', async () => {
